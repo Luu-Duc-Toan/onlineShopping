@@ -57,8 +57,7 @@ contract ProductManagerCollateralTest is ProductManagerTestBase {
     }
 
     function testWithdrawExcessCollateralRevertWhenNotSeller() public {
-        // Add product with excess collateral
-        uint totalCollateral = addProductWithExcessHelper(
+        addProductWithExcessHelper(
             PRODUCT_1,
             QUANTITY_1,
             seller1,
@@ -67,7 +66,6 @@ contract ProductManagerCollateralTest is ProductManagerTestBase {
             500
         );
 
-        // Try to withdraw from different account
         vm.prank(seller2);
         vm.expectRevert("Only the seller can call this");
         productManager.withdrawExcessCollateral(PRODUCT_1);
