@@ -1,13 +1,31 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.19;
+import "./CollateralManager.sol";
+import "forge-std/console.sol";
 
 contract ProductManager {
-    uint public collateralPercent = 10;
-    mapping(string => uint) public collaterals;
+    CollateralManager public collateralManager;
+    address public orderManager;
+
     mapping(string => uint) public quantities;
     mapping(string => address) public sellers;
-    mapping(string => uint) public preparingTimes;
     mapping(string => uint) public prices;
+
+    constructor(address _collateralManager) {
+        require(
+            _collateralManager != address(0),
+            "Invalid CollateralManager address"
+        );
+        collateralManager = CollateralManager(_collateralManager);
+    }
+
+    modifier onlyCollateralManager() {
+        require(
+            msg.sender == address(collateralManager),
+            "Only CollateralManager can call this"
+        );
+        _;
+    }
 
     modifier onlySeller(string calldata product) {
         require(
@@ -16,97 +34,96 @@ contract ProductManager {
         );
         _;
     }
-    modifier isEnoughCollateral(
-        uint collateral,
-        uint price,
-        uint quantity
-    ) {
-        uint requiredCollateral = (price * collateralPercent * quantity) / 100;
-        require(collateral >= requiredCollateral, "Insufficient collateral");
+
+    modifier onlyOrderManager() {
+        require(
+            msg.sender == address(orderManager),
+            "Only OrderManager can call this"
+        );
         _;
+    }
+
+    function setOrderManager(
+        address _orderManager
+    ) external onlyCollateralManager {
+        require(_orderManager != address(0), "Invalid OrderManager address");
+        orderManager = _orderManager;
     }
 
     function addProduct(
         string calldata product,
         uint quantity,
-        uint preparingTime,
         uint price
-    ) public payable isEnoughCollateral(msg.value, price, quantity) {
+    ) public {
         require(sellers[product] == address(0), "Product already exists");
+        require(
+            collateralManager.isEnoughProductCollateral(
+                product,
+                price,
+                quantity
+            ),
+            "Insufficient product collateral"
+        );
         quantities[product] = quantity;
         sellers[product] = msg.sender;
-        preparingTimes[product] = preparingTime;
         prices[product] = price;
-        collaterals[product] = msg.value;
     }
 
     function updateQuantities(
         string calldata product,
         uint quantity
-    )
-        public
-        payable
-        onlySeller(product)
-        isEnoughCollateral(
-            msg.value + collaterals[product],
-            prices[product],
-            quantity
-        )
-    {
-        collaterals[product] += msg.value;
-        quantities[product] = quantity;
-    }
-
-    function updatePreparingTime(
-        string calldata product,
-        uint preparingTime
     ) public onlySeller(product) {
-        preparingTimes[product] = preparingTime;
+        require(
+            collateralManager.isEnoughProductCollateral(
+                product,
+                prices[product],
+                quantity
+            ),
+            "Insufficient product collateral"
+        );
+        quantities[product] = quantity;
     }
 
     function updatePrice(
         string calldata product,
         uint price
-    )
-        public
-        payable
-        onlySeller(product)
-        isEnoughCollateral(
-            msg.value + collaterals[product],
-            price,
-            quantities[product]
-        )
-    {
-        collaterals[product] += msg.value;
+    ) public onlySeller(product) {
+        require(
+            collateralManager.isEnoughProductCollateral(
+                product,
+                price,
+                quantities[product]
+            ),
+            "Insufficient product collateral"
+        );
         prices[product] = price;
     }
 
     function removeProduct(string calldata product) public onlySeller(product) {
-        uint collateral = collaterals[product];
-
-        //order
         delete sellers[product];
         delete quantities[product];
-        delete preparingTimes[product];
         delete prices[product];
-        delete collaterals[product];
-
-        payable(msg.sender).transfer(collateral);
+        collateralManager.refundProductCollateral(msg.sender, product);
     }
 
-    function withdrawExcessCollateral(
-        string calldata product
-    ) public onlySeller(product) {
-        uint requiredCollateral = (prices[product] *
-            collateralPercent *
-            quantities[product]) / 100;
+    function withdrawExcessProductCollateral(string calldata product) public {
         require(
-            collaterals[product] > requiredCollateral,
-            "No excess collateral"
+            sellers[product] == msg.sender,
+            "Only the seller can call this"
         );
+        collateralManager.withdrawExcessProductCollateral(
+            product,
+            prices[product],
+            quantities[product],
+            msg.sender
+        );
+    }
 
-        uint excessCollateral = collaterals[product] - requiredCollateral;
-        collaterals[product] = requiredCollateral;
-        payable(msg.sender).transfer(excessCollateral);
+    function order(
+        string calldata product,
+        uint quantity
+    ) public onlyOrderManager {
+        require(quantities[product] >= quantity, "Not enough product quantity");
+        quantities[product] -= quantity;
     }
 }
